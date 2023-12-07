@@ -1,0 +1,122 @@
+#!/bin/bash
+
+set -euo pipefail
+
+help() {
+	cat << EOF
+
+Usage: gh reassign-prs --to someone
+	Reassigned your assigned PRs to someone else interactively
+
+	Required arguments:
+		--to someone
+				sets the user or team to whom the PRs will be assigned
+				you will be unassigned from the PRs
+				e.g. --to someone or --to org/team
+	Optional arguments:
+		--from someone
+				sets the user or team from whom the PRs will be unassigned
+				e.g. --from someone or --from org/team
+				Defaults to the current user
+		--since yyyy-MM-dd
+				sets the last updated date from which PRs will be selected
+				e.g. --since 2020-01-01
+				Defaults to 30 days ago
+		--repo COMMA,SEPARATED,LIST
+				if set, will only work on PRs in the selected repos.
+				e.g. --repo org/repo1,org/repo2
+				Defaults to the current repository
+
+EOF
+}
+
+FROM=@me
+TO=
+SINCE=$(date -v-30d +%Y-%m-%d)
+REPO_QUERY=
+while [ $# -gt 0 ]; do
+	case "$1" in
+	-h|--help)
+		help
+		exit 0
+		;;
+	--from)
+		shift
+		FROM=$1
+		;;
+	--to)
+		shift
+		TO=$1
+		;;
+	--since)
+		shift
+		SINCE=$1
+		;;
+	--repo)
+		shift
+		REPO_QUERY=$(echo "$1" | sed 's/,/ repo:/g' | sed 's/^/repo:/')
+		;;
+	*)
+		help >&2
+		exit 1
+		;;
+	esac
+	shift
+done
+
+if [[ -z "${TO}" ]]; then
+	help
+	echo "Error: --to is required; e.g. --to someone or --to org/team"
+	exit 1
+fi
+
+echo "The following PRs are currently assigned to $FROM:"
+echo
+
+ASSIGNED_PRS=$(gh pr list --state open --search "review-requested:$FROM updated:>=$SINCE $REPO_QUERY" --json headRefName,number,title,url,updatedAt)
+PRS_BY_URL=($(echo $ASSIGNED_PRS | jq -r ".[].url"))
+
+echo $ASSIGNED_PRS | jq -r 'to_entries[] | ["\(.key))",.value.title,.value.headRefName,.value.url,.value.updatedAt] | @tsv' | column -t -s $'\t'
+echo
+
+confirm() {
+	echo "Press any key to continue or Escape to abort..."
+	while read -r -n1 key; do
+		if [[ $key == $'\e' ]]; then
+			exit 0
+		else
+			break
+		fi
+	done
+}
+
+echo "Choose which PRs you want to reassign to $TO (space separated, e.g 0 1 3): "
+read -r TO_BE_REASSIGNED
+IFS=' ' read -ra TO_BE_REASSIGNED <<< "$TO_BE_REASSIGNED"
+echo
+
+echo "The following PRs will be reassigned to $TO:"
+echo
+
+for index in "${TO_BE_REASSIGNED[@]}"; do
+	if [[ $index -ge ${#PRS_BY_URL[@]} ]]; then
+		continue
+	fi
+
+	pr=$(echo $ASSIGNED_PRS | jq -r ".[$index] | [.title, .url] | @tsv")
+	echo "$index) $pr"
+done
+
+echo
+confirm
+echo
+
+for index in "${TO_BE_REASSIGNED[@]}"; do
+	if [[ $index -ge ${#PRS_BY_URL[@]} ]]; then
+		continue
+	fi
+
+	url=${PRS_BY_URL[index]}
+	echo "Reassigning: $url..."
+	echo "gh pr edit $url --remove-reviewer $FROM --add-reviewer $TO"
+done
