@@ -26,6 +26,8 @@ Usage: gh reassign-prs --to someone
 				if set, will only work on PRs in the selected repos.
 				e.g. --repo org/repo1,org/repo2
 				Defaults to the current repository
+		--dry-run
+				prints the commands that would be run without executing them
 
 EOF
 }
@@ -34,6 +36,7 @@ FROM=@me
 TO=
 SINCE=$(date -v-30d +%Y-%m-%d)
 REPO_QUERY=
+DRY_RUN=0
 while [ $# -gt 0 ]; do
 	case "$1" in
 	-h|--help)
@@ -55,6 +58,9 @@ while [ $# -gt 0 ]; do
 	--repo)
 		shift
 		REPO_QUERY=$(echo "$1" | sed 's/,/ repo:/g' | sed 's/^/repo:/')
+		;;
+	--dry-run)
+		DRY_RUN=1
 		;;
 	*)
 		help >&2
@@ -118,5 +124,10 @@ for index in "${TO_BE_REASSIGNED[@]}"; do
 
 	url=${PRS_BY_URL[index]}
 	echo "Reassigning: $url..."
-	echo "gh pr edit $url --remove-reviewer $FROM --add-reviewer $TO"
+	cmd="gh pr edit $url --remove-reviewer $FROM --add-reviewer $TO"
+	if [[ $DRY_RUN -eq 1 ]]; then
+		echo "$cmd"
+	else
+		$cmd
+	fi
 done
